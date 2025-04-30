@@ -1,0 +1,236 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Online-Shop</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+  <!-- Navigation -->
+  <nav class="bg-blue-600 text-white p-4">
+    <div class="container mx-auto flex justify-between items-center">
+      <h1 class="text-xl font-bold">Mein Online-Shop</h1>
+      <div>
+        <button id="showProducts" class="mr-4 hover:underline">Produkte</button>
+        <button id="showAddProduct" class="mr-4 hover:underline">Produkt hinzufügen</button>
+        <button id="showCart" class="hover:underline">Warenkorb (<span id="cartCount">0</span>)</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hauptbereich -->
+  <main class="container mx-auto p-6">
+    <!-- Produkt hinzufügen -->
+    <section id="addProductSection" class="hidden bg-white p-6 rounded-lg shadow-lg mb-6">
+      <h2 class="text-2xl font-bold mb-4">Produkt hinzufügen</h2>
+      <div class="space-y-4">
+        <input id="productName" type="text" placeholder="Produktname" class="w-full p-2 border rounded">
+        <input id="productPrice" type="number" placeholder="Preis (in €)" step="0.01" class="w-full p-2 border rounded">
+        <textarea id="productDescription" placeholder="Beschreibung" class="w-full p-2 border rounded"></textarea>
+        <input id="productImage" type="file" accept="image/*" class="w-full">
+        <button id="addProductButton" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 w-full">Produkt speichern</button>
+      </div>
+    </section>
+
+    <!-- Produktübersicht -->
+    <section id="productsSection" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <h2 class="text-2xl font-bold mb-4 col-span-full">Produkte</h2>
+      <div id="productList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+    </section>
+
+    <!-- Warenkorb -->
+    <section id="cartSection" class="hidden bg-white p-6 rounded-lg shadow-lg">
+      <h2 class="text-2xl font-bold mb-4">Warenkorb</h2>
+      <div id="cartItems" class="space-y-4"></div>
+      <p class="mt-4 font-bold">Gesamt: €<span id="cartTotal">0.00</span></p>
+      <button id="clearCart" class="mt-4 bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Warenkorb leeren</button>
+    </section>
+  </main>
+
+  <script>
+    // Navigation zwischen Abschnitten
+    const sections = {
+      products: document.getElementById('productsSection'),
+      addProduct: document.getElementById('addProductSection'),
+      cart: document.getElementById('cartSection')
+    };
+
+    document.getElementById('showProducts').addEventListener('click', () => {
+      showSection('products');
+    });
+    document.getElementById('showAddProduct').addEventListener('click', () => {
+      showSection('addProduct');
+    });
+    document.getElementById('showCart').addEventListener('click', () => {
+      showSection('cart');
+    });
+
+    function showSection(section) {
+      Object.values(sections).forEach(sec => sec.classList.add('hidden'));
+      sections[section].classList.remove('hidden');
+    }
+
+    // Produkte und Warenkorb verwalten
+    let products = JSON.parse(localStorage.getItem('products')) || [];
+    let cart = JSON.parse(localStorage.getItem('cart')) || [];
+
+    // Produkt hinzufügen
+    document.getElementById('addProductButton').addEventListener('click', () => {
+      const name = document.getElementById('productName').value;
+      const price = parseFloat(document.getElementById('productPrice').value);
+      const description = document.getElementById('productDescription').value;
+      const image = document.getElementById('productImage').files[0];
+
+      if (!name || isNaN(price) || !image) {
+        alert('Bitte fülle alle Felder aus und lade ein Bild hoch!');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const product = {
+          id: Date.now(),
+          name,
+          price,
+          description,
+          image: e.target.result
+        };
+        products.push(product);
+        localStorage.setItem('products', JSON.stringify(products));
+        renderProducts();
+        clearAddProductForm();
+        showSection('products');
+      };
+      reader.readAsDataURL(image);
+    });
+
+    // Produktübersicht rendern
+    function renderProducts() {
+      const productList = document.getElementById('productList');
+      productList.innerHTML = '';
+      products.forEach(product => {
+        const card = document.createElement('div');
+        card.className = 'bg-white p-4 rounded-lg shadow-lg';
+        card.innerHTML = `
+          <img src="${product.image}" alt="${product.name}" class="w-full h-48 object-cover rounded mb-4">
+          <h3 class="text-lg font-bold">${product.name}</h3>
+          <p class="text-gray-600">${product.description}</p>
+          <p class="font-bold mt-2">€${product.price.toFixed(2)}</p>
+          <button class="add-to-cart bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mt-4 w-full" data-id="${product.id}">In den Warenkorb</button>
+        `;
+        productList.appendChild(card);
+      });
+
+      // Event-Listener für "In den Warenkorb"
+      document.querySelectorAll('.add-to-cart').forEach(button => {
+        button.addEventListener('click', () => {
+          const productId = parseInt(button.dataset.id);
+          const product = products.find(p => p.id === productId);
+          cart.push(product);
+          localStorage.setItem('cart', JSON.stringify(cart));
+          updateCart();
+        });
+      });
+    }
+
+    // Warenkorb rendern
+    function updateCart() {
+      const cartItems = document.getElementById('cartItems');
+      const cartTotal = document.getElementById('cartTotal');
+      const cartCount = document.getElementById('cartCount');
+      cartItems.innerHTML = '';
+      let total = 0;
+
+      cart.forEach((item, index) => {
+        total += item.price;
+        const cartItem = document.createElement('div');
+        cartItem.className = 'flex justify-between items-center border-b py-2';
+        cartItem.innerHTML = `
+          <div class="flex items-center">
+            <img src="${item.image}" alt="${item.name}" class="w-16 h-16 object-cover rounded mr-4">
+            <div>
+              <h3 class="font-bold">${item.name}</h3>
+              <p>€${item.price.toFixed(2)}</p>
+            </div>
+          </div>
+          <button class="remove-from-cart text-red-500 hover:underline" data-index="${index}">Entfernen</button>
+        `;
+        cartItems.appendChild(cartItem);
+      });
+
+      cartTotal.textContent = total.toFixed(2);
+      cartCount.textContent = cart.length;
+
+      // Event-Listener für "Entfernen"
+      document.querySelectorAll('.remove-from-cart').forEach(button => {
+        button.addEventListener('click', () => {
+          const index = parseInt(button.dataset.index);
+          cart.splice(index, 1);
+          localStorage.setItem('cart', JSON.stringify(cart));
+          updateCart();
+        });
+      });
+    }
+
+    // Warenkorb leeren
+    document.getElementById('clearCart').addEventListener('click', () => {
+      cart = [];
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCart();
+    });
+
+    // Formular zurücksetzen
+    function clearAddProductForm() {
+      document.getElementById('productName').value = '';
+      document.getElementById('productPrice').value = '';
+      document.getElementById('productDescription').value = '';
+      document.getElementById('productImage').value = '';
+    }
+
+    // Initiales Rendern
+    renderProducts();
+    updateCart();
+    showSection('products');
+  </script>
+</body>
+</html>
